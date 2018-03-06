@@ -34,7 +34,7 @@ class Client(discord.Client):
     async def owner_log(self,message):
         if self.owner_logging:
             while not self.is_ready():
-                asyncio.wait(0.1)
+                asyncio.sleep(0.1)
             await self.owner.send(message)
 
     async def on_message(self,message):
