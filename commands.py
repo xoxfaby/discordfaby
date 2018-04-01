@@ -5,14 +5,19 @@ import aiofiles
 import asyncio
 import os
 import pexpect
+import io
+import textwrap
+import traceback
 from threading import Thread
 from queue import Queue, Empty
 from datetime import datetime
 from shlex import split as shsplit
 from os import path
 from time import monotonic
+from contextlib import redirect_stdout
 
 class CommandFound(Exception): pass
+
 
 def escape_ansi(line):
     ansi_escape = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]')
@@ -35,11 +40,58 @@ async def getTemp():
 
     return xcputemp, xgputemp
 
+async def ignore_modify(client,message,params={},ignore=True):
+    users = []
+    for ID in params.keys():
+        try:
+            ID_user = client.get_user(int(ID))
+        except:
+            ID_user = None
+        if ID_user is not None:
+            users.append(ID_user.id)
+    for user in message.mentions:
+        if user != client.user:
+            users.append(user.id)
+    i = len(users)
+    if ignore:
+        client.ignore_users(users)
+    else:
+        client.unignore_users(users)
+    if i < 0:
+        await message.add_reaction('\U0000274c')
+    elif i < 10:
+        await message.add_reaction(f'{i}\u20e3')
+    else:
+        await message.add_reaction('9\u20e3')
+        await message.add_reaction('\U00002795')
+
+async def admins_modify(client,message,params={},promote=True):
+    users = []
+    for ID in params.keys():
+        try:
+            ID_user = client.get_user(int(ID))
+        except:
+            ID_user = None
+        if ID_user is not None:
+            users.append(ID_user.id)
+    for user in message.mentions:
+        if user != client.user:
+            users.append(user.id)
+    i = len(users)
+    if promote:
+        client.promote_users(users)
+    else:
+        client.demote_users(users)
+    if i < 0:
+        await message.add_reaction('\U0000274c')
+    elif i < 10:
+        await message.add_reaction(f'{i}\u20e3')
+    else:
+        await message.add_reaction('9\u20e3')
+        await message.add_reaction('\U00002795')
+
 async def cExec(client,message, params={}):
-    '''Executes shit. `OWNER ONLY`'''
-    if message.author != client.get_user(103294721119494144):
-        await message.channel.send(f"I'm sorry {message.author.mention}, I'm afraid I can't do that.")
-        return
+    '''Executes shit.'''
     stdin = []
     q = Queue()
     async def read_stdin():
@@ -52,17 +104,19 @@ async def cExec(client,message, params={}):
         while not pe.eof():
             q.put(escape_ansi(pe.readline().decode('utf-8')))
 
-    await message.add_reaction('\U00002753')
-
-    def check(m):
-        return m.author == message.author and m.channel == message.channel
-
-    msg = await client.wait_for('message', check=check)
-    await message.remove_reaction('\U00002753', client.user)
-    shcmd = shsplit(msg.content)
+    if len(params.get('ctext')) > 0:
+        cmd = shsplit(params['ctext'])
+    else:
+        await message.add_reaction('\U00002753')
+        def check(m):
+            return m.author == message.author and m.channel == message.channel
+        msg = await client.wait_for('message', check=check)
+        await message.remove_reaction('\U00002753', client.user)
+        cmd = msg.content
+    shcmd = shsplit(cmd)
     try:
         pccommand = pexpect.spawn(shcmd[0], shcmd[1:], timeout=None)
-        pccommand.setwinsize(15,70)
+        pccommand.setwinsize(16,70)
         pccommand.setecho(True)
         await message.add_reaction('\U00002705')
     except FileNotFoundError:
@@ -75,7 +129,7 @@ async def cExec(client,message, params={}):
     t.daemon = True
     t.start()
 
-    embedm = await message.channel.send(content=f'Executing `{msg.content}`\n```   ```')
+    embedm = await message.channel.send(content=f'Executing `{cmd}`\n```   ```')
     embedupdate = monotonic()
     pcoutput = ""
     embedlastout = ""
@@ -91,7 +145,7 @@ async def cExec(client,message, params={}):
         if embedupdate+1.5 < monotonic() and pcoutput != embedlastout:
             embedupdate = monotonic()
             embedlastout = pcoutput
-            await embedm.edit(content=f'Executing `{msg.content}`\n```{newline.join(pcoutput.splitlines()[-15:])}```')
+            await embedm.edit(content=f'Executing `{cmd}`\n```{newline.join(pcoutput.splitlines()[-15:])}```')
         for msgin in list(stdin):
             if msgin.startswith(f'{b}kill'):
                 pccommand.terminate(force=True)
@@ -103,6 +157,8 @@ async def cExec(client,message, params={}):
                 pccommand.sendline()
             elif msgin.startswith(f'{b}term'):
                 pccommand.terminate()
+            elif msgin.startswith(f'{b}'):
+                pass
             elif msgin.startswith('```'):
                 pccommand.sendline(msgin[3:-3])
             elif msgin.startswith('ok i screwed up pls kill it now'):
@@ -123,12 +179,69 @@ async def cExec(client,message, params={}):
     pcoutput = f'{pcoutput}\nReturned with: {exitcode}'
     await embedm.edit(content=f'Executing `{msg.content}`\n```{newline.join(pcoutput.splitlines()[-15:])}```')
 
+async def cEval(client,message, params={}):
+    '''Evaluates shit.'''
+    if len(params.get('ctext')) > 0:
+        body = params['ctext']
+        msg = message
+    else:
+        await message.add_reaction('\U00002753')
+        def check(m):
+            return m.author == message.author and m.channel == message.channel
+        msg = await client.wait_for('message', check=check)
+        await message.remove_reaction('\U00002753', client.user)
+        body = msg.content
+    env = {
+        'bot': client,
+        'client': client,
+        'channel': message.channel,
+        'author': message.author,
+        'guild': message.guild,
+        'message': message,
+        'message2': msg,
+        'params':params
+    }
+
+    env.update(globals())
+
+    if body.startswith('```py'):
+        body = body[5:-3]
+    elif body.startswith('```py'):
+        body = body[3:-3]
+    elif body.startswith('`'):
+        body = body[1:-1]
+
+    stdout = io.StringIO()
+
+    to_compile = f'async def func():\n{textwrap.indent(body, "  ")}'
+
+    try:
+        exec(to_compile, env)
+    except Exception as e:
+        return await message.channel.send(f'```py\n{e.__class__.__name__}: {e}\n```')
+
+    func = env['func']
+    try:
+        with redirect_stdout(stdout):
+            ret = await func()
+    except Exception as e:
+        value = stdout.getvalue()
+        await message.channel.send(f'```py\n{value}{traceback.format_exc()}\n```')
+    else:
+        value = stdout.getvalue()
+        try:
+            await msg.add_reaction('\u2705')
+        except:
+            pass
+
+        if ret is None:
+            if value:
+                await message.channel.send(f'```py\n{value}\n```')
+        else:
+            await message.channel.send(f'```py\n{value}{ret}\n```')
 
 async def cReload(client,message, params={}):
-    '''Reloads the bot. `OWNER ONLY`'''
-    if message.author != client.owner:
-        await message.channel.send(f"I'm sorry {message.author.mention}, I'm afraid I can't do that.")
-        return
+    '''Reloads the bot. '''
     await message.add_reaction('\U0000267b')
     async with aiofiles.open(path.join(client.dirs['logs'], 'reload'), ('w+')) as reloadfile:
         await reloadfile.write(str(message.channel.id))
@@ -137,10 +250,7 @@ async def cReload(client,message, params={}):
     exit()
 
 async def cShutdown(client,message,params={}):
-    '''Turns off the bot hardware. `OWNER ONLY`'''
-    if message.author != client.owner:
-        await message.channel.send( "I hope you never wake up." )
-        return
+    '''Turns off the bot hardware.'''
     await message.add_reaction('\U0000267b')
     async with aiofiles.open(path.join(client.dirs['logs'], 'reload'), ('w+')) as reloadfile:
         await reloadfile.write(str(message.channel.id))
@@ -149,33 +259,45 @@ async def cShutdown(client,message,params={}):
 
 async def cPrefix(client, message, params={}):
     '''mate there is no prefix'''
-    message.channel.send('No prefix, simply mention me anywhere in your command.')
-
+    await message.channel.send('No prefix, simply mention me anywhere in your command.')
 
 async def cHelp(client, message, params={}):
     '''Get help for the bot'''
     hCommands = {}
+    admin = params.get('admin') or params.get('owner') or params.get('all')
     for key, command in client.commands.items():
         if params.get(key):
             hCommands[key] = command
             next
         for cmdName in command[0]:
             if params.get(cmdName):
-                hCommands.append(command)
+                hCommands[key] = command
                 break
+    if not hCommands:
+        if admin:
+            hCommands = client.commands
+        else:
+            hCommands = {key:command for key, command in client.commands.items() if not command[3] }
+
     embed = discord.Embed()
     embed.title = f'Help for {client.user.display_name}'
     embed.type = 'rich'
     embed.description = 'To use a command mention me with the command name and any parameters. Named parameters are called by name=value'
     embed.colour = discord.Color.gold()
-    for key, command in hCommands.items() or commands.items():
-        embed.add_field(name=f"{key}/{'/'.join(command[0])}", value=command[1].__doc__, inline=False)
+    for key, command in hCommands.items():
+        aliases = [key]
+        aliases.extend(command[0])
+        if command[3]:
+            embed.add_field(name=f"{'/'.join(aliases)}  **ADMIN ONLY** ", value=command[1].__doc__, inline=False)
+        else:
+            embed.add_field(name=f"{'/'.join(aliases)}", value=command[1].__doc__, inline=False)
 
     await message.channel.send(embed=embed)
 
 async def cStatus(client, message, params={}):
     '''Returns misc bot information'''
-    async with client.session.get("http://icanhazip.com/") as IP:
+    #async with client.session.get("http://icanhazip.com/") as IP:
+    async with client.session.get("http://ipecho.net/plain/") as IP:
         tIP = str(await IP.text())[:-1]
     pping = subprocess.Popen(['ping', '-c 1', '8.8.8.8'], stdout=subprocess.PIPE)
     while pping.poll() is None:
@@ -191,7 +313,6 @@ async def cStatus(client, message, params={}):
     embed.add_field(name='Local Time', value=datetime.now().strftime('%H:%M:%S UTC+1'), inline=True)
     await message.channel.send(embed=embed)
 
-
 async def cDebug(client, message, params={}):
     '''Prints the console output'''
     async with aiofiles.open(path.join(client.dirs['logs'], 'stdout.log'), "r") as logfile:
@@ -202,15 +323,35 @@ async def cDebug(client, message, params={}):
             lines = 10
         await message.channel.send(f"```{''.join(logs[-lines:])}```")
 
+async def cIgnore(client,message,params={}):
+    '''Ignores users '''
+    await ignore_modify(client,message,params)
+
+async def cUnIgnore(client, message, params={}):
+    '''Unignores users '''
+    await ignore_modify(client, message, params,ignore=False)
+
+async def cPromote(client, message, params={}):
+    '''Promote users to admin '''
+    await admins_modify(client, message, params)
+
+async def cDemote(client, message, params={}):
+    '''Demote users from admin'''
+    await admins_modify(client, message, params,promote=False)
 
 
 
 commands = {
-    'reload':[['relaod', 'restart'], cReload, False],
-    'shutdown':[['goodnight'], cReload, False],
-    'status':[['info'], cStatus, False],
-    'help':[['commands'], cHelp, False],
-    'prefix':[[], cPrefix, False],
-    'debug':[['error'], cDebug, False],
-    'exec':[[], cExec, False]
+    'reload':[['relaod', 'restart'], cReload, False, True],
+    'shutdown':[['goodnight'], cShutdown, False, True],
+    'status':[['info'], cStatus, False, False],
+    'help':[['commands'], cHelp, False, False],
+    'prefix':[[], cPrefix, False, False],
+    'debug':[['error'], cDebug, False, True],
+    'exec':[[], cExec, False, True],
+    'ignore':[[], cIgnore, False, True],
+    'unignore':[[], cUnIgnore, False, True],
+    'promote':[[], cPromote, False, True],
+    'demote':[[], cDemote, False, True],
+    'eval':[['evaluate'],cEval, False, True]
 }
