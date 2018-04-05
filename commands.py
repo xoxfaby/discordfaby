@@ -8,6 +8,7 @@ import pexpect
 import io
 import textwrap
 import traceback
+import functools
 from threading import Thread
 from queue import Queue, Empty
 from datetime import datetime
@@ -18,10 +19,52 @@ from contextlib import redirect_stdout
 
 class CommandFound(Exception): pass
 
+#8888888888
+#8796543210
+#8765432091
+#8796543210
 
 def escape_ansi(line):
     ansi_escape = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]')
     return ansi_escape.sub('', line)
+
+def unique_num(n):
+    try:
+        n = abs(int(n))
+    except:
+        return
+    if n > 9876543210: n = 9876543210
+    ns = f'{n}'
+    if len(set(ns)) == len(ns):
+        return n
+    else:
+        for i,v in enumerate(ns):
+            if v in f'{ns[i+1:]}':
+                if i == i:
+                    i = next(ii for ii,vv in reversed(list(enumerate(ns))) if vv == v and ii != 0)
+                new_s = f'{int(ns[:i+1])-1}'
+                letters = ''.join(char for char in "9876543210" if not char in new_s)
+                return unique_num(f'{new_s}{"".join(letters[:len(ns[i+1:])])}')
+
+def unique_num_slow(n):
+    try:
+        n = abs(int(n))
+    except:
+        return
+    if n > 9876543210: n = 9876543210
+    while True:
+        ns = f'{n}'
+        if len(set(ns)) == len(ns):
+            return n
+        n -= 1
+
+async def num_react(client,message,n):
+    old_n = n
+    a_num = functools.partial(unique_num, n)
+    n = await client.loop.run_in_executor(None, a_num)
+    for char in str(n):
+        await message.add_reaction(f'{char}\U000020e3')
+    if int(old_n) > n: await message.add_reaction('\U00002795')
 
 async def getTemp():
     try:
@@ -44,51 +87,65 @@ async def ignore_modify(client,message,params={},ignore=True):
     users = []
     for ID in params.keys():
         try:
-            ID_user = client.get_user(int(ID))
+            ID = int(ID)
         except:
-            ID_user = None
-        if ID_user is not None:
-            users.append(ID_user.id)
+            continue
+        if client.get_user(ID):
+            users.append(ID)
+        elif ID in [role.id for role in message.guild.roles]:
+            if params.get('unpack'):
+                for member in discord.utils.get(message.guild.roles, id=ID).members:
+                    users.append(member.id)
+            else:
+                users.append(ID)
+        else:
+            try:
+                await client.get_user_info(ID)
+                users.append(ID)
+            except:
+                pass
     for user in message.mentions:
         if user != client.user:
             users.append(user.id)
+    for role in message.role_mentions:
+        if params.get('unpack'):
+            for member in role.members:
+                users.append(member.id)
+        else:
+            users.append(role.id)
+    if '@everyone' in message.content:
+        users.extend([member.id for member in message.guild.members])
     i = len(users)
     if ignore:
         client.ignore_users(users)
     else:
         client.unignore_users(users)
-    if i < 0:
-        await message.add_reaction('\U0000274c')
-    elif i < 10:
-        await message.add_reaction(f'{i}\u20e3')
-    else:
-        await message.add_reaction('9\u20e3')
-        await message.add_reaction('\U00002795')
+    await num_react(message,i)
 
 async def admins_modify(client,message,params={},promote=True):
     users = []
     for ID in params.keys():
         try:
-            ID_user = client.get_user(int(ID))
+            ID = int(ID)
         except:
-            ID_user = None
-        if ID_user is not None:
-            users.append(ID_user.id)
+            continue
+        if ID in [role.id for role in message.guild.roles] or client.get_user(ID) or (await client.get_user_info(ID)):
+            users.append(ID)
     for user in message.mentions:
         if user != client.user:
             users.append(user.id)
+    for role in message.role_mentions:
+        if params.get('unpack'):
+            for member in role.members:
+                users.append(member.id)
+        else:
+            users.append(role.id)
     i = len(users)
     if promote:
         client.promote_users(users)
     else:
         client.demote_users(users)
-    if i < 0:
-        await message.add_reaction('\U0000274c')
-    elif i < 10:
-        await message.add_reaction(f'{i}\u20e3')
-    else:
-        await message.add_reaction('9\u20e3')
-        await message.add_reaction('\U00002795')
+    await num_react(message,i)
 
 async def cExec(client,message, params={}):
     '''Executes shit.'''
@@ -105,7 +162,7 @@ async def cExec(client,message, params={}):
             q.put(escape_ansi(pe.readline().decode('utf-8')))
 
     if len(params.get('ctext')) > 0:
-        cmd = shsplit(params['ctext'])
+        cmd = params['ctext']
     else:
         await message.add_reaction('\U00002753')
         def check(m):
@@ -135,7 +192,7 @@ async def cExec(client,message, params={}):
     embedlastout = ""
     newline = '\n'
     b = '\U0001f171'
-    while pccommand.isalive():
+    while pccommand.isalive() or not q.empty():
         try:
             line = q.get_nowait()
         except Empty:
@@ -177,7 +234,7 @@ async def cExec(client,message, params={}):
         exitcode = pccommand.signalstatus
 
     pcoutput = f'{pcoutput}\nReturned with: {exitcode}'
-    await embedm.edit(content=f'Executing `{msg.content}`\n```{newline.join(pcoutput.splitlines()[-15:])}```')
+    await embedm.edit(content=f'Executing `{cmd}`\n```{newline.join(pcoutput.splitlines()[-15:])}```')
 
 async def cEval(client,message, params={}):
     '''Evaluates shit.'''
@@ -262,7 +319,7 @@ async def cPrefix(client, message, params={}):
     await message.channel.send('No prefix, simply mention me anywhere in your command.')
 
 async def cHelp(client, message, params={}):
-    '''Get help for the bot'''
+    '''Get help for the bot. admin/all to see admin commands'''
     hCommands = {}
     admin = params.get('admin') or params.get('owner') or params.get('all')
     for key, command in client.commands.items():
@@ -282,10 +339,15 @@ async def cHelp(client, message, params={}):
     embed = discord.Embed()
     embed.title = f'Help for {client.user.display_name}'
     embed.type = 'rich'
-    embed.description = 'To use a command mention me with the command name and any parameters. Named parameters are called by name=value'
+    embed.description = 'To use a command mention me with the command name and any parameters.\n' \
+                        'Named parameters are called by name=value\n' \
+                        '\U0001f550 are \'blocking\' commands'
     embed.colour = discord.Color.gold()
     for key, command in hCommands.items():
-        aliases = [key]
+        if command[2]:
+            aliases = ['\U0001f550 ' + key]
+        else:
+            aliases = [key]
         aliases.extend(command[0])
         if command[3]:
             embed.add_field(name=f"{'/'.join(aliases)}  **ADMIN ONLY** ", value=command[1].__doc__, inline=False)
@@ -339,7 +401,8 @@ async def cDemote(client, message, params={}):
     '''Demote users from admin'''
     await admins_modify(client, message, params,promote=False)
 
-
+async def cNumReact(client,message,params={}):
+    await num_react(client,message,params.get('ctext') or params.get('n'))
 
 commands = {
     'reload':[['relaod', 'restart'], cReload, False, True],
@@ -353,5 +416,6 @@ commands = {
     'unignore':[[], cUnIgnore, False, True],
     'promote':[[], cPromote, False, True],
     'demote':[[], cDemote, False, True],
+    'numreact':[[], cNumReact, False, False],
     'eval':[['evaluate'],cEval, False, True]
 }

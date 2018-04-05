@@ -123,7 +123,6 @@ class Client(discord.Client):
             await self.owner_log(f"{appinfo.name} running on {IPtext}")
 
 
-
     async def parse_commands(self,message):
         if isinstance(message.channel, discord.abc.PrivateChannel):
             if message.author != message.channel.me:
@@ -135,11 +134,18 @@ class Client(discord.Client):
         cmd = None
         params = {}
         if message.guild.me in message.mentions and message.author != message.guild.me and not message.content.startswith('!'):
-            if message.author.bot or message.author.id in self.ignored:
+            if message.author.id not in self.admins and (message.author.bot or message.author.id in self.ignored
+               or not set([role.id for role in message.author.roles]).isdisjoint(self.ignored)):
                 await message.add_reaction('\U0000267f')
                 return
             smessage = message.content.split()
-            smessage.remove(message.guild.me.mention)
+            try:
+                smessage.remove(message.guild.me.mention)
+            except ValueError:
+                for pmessage in smessage:
+                    if message.guild.me.mention in pmessage:
+                        smessage.remove(pmessage)
+                        break
             try:
                 for pmessage in smessage:
                     if pmessage.lower() in self.commands:
@@ -163,6 +169,7 @@ class Client(discord.Client):
                 params['text'] = ' '.join(smessage)
                 if cmd[2]:
                     if message.author.id in self.waitlist:
+                        await message.add_reaction('\U0001f550')
                         return
                     else:
                         self.waitlist.append(message.author.id)
