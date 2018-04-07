@@ -17,34 +17,59 @@ from os import path
 from time import monotonic
 from contextlib import redirect_stdout
 
-class CommandFound(Exception): pass
 
-#8888888888
-#8796543210
-#8765432091
-#8796543210
+class Command():
+    def __init__(self,aliases=None,coroutine=None,cooldown=False,owner=False,admin=False,name=None):
+        self.aliases = aliases or []
+        if coroutine is None: raise KeyError('Missing Coroutine')
+        self.coroutine = coroutine
+        self.cooldown = cooldown
+        self.owner = owner
+        self.admin = admin
+        self.name = name
+
+    def __bool__(self):
+        return True
+
+    def __call__(self,**kwargs):
+        return self.coroutine(**kwargs)
+
+    def __getitem__(self,key):
+        if key == 0: return self.aliases
+        if key == 1: return self.coroutine
+        if key == 2: return self.cooldown
+        if key == 3: return self.owner
+        if key == 4: return self.admin
 
 def escape_ansi(line):
     ansi_escape = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]')
     return ansi_escape.sub('', line)
+
+def leftmost_duplicate(s : str) -> int:
+    return min(next(ii+len(s[:i+1]) for ii,vv in enumerate(f'{s[i+1:]}') if vv == v) for i,v in enumerate(s) if v in f'{s[i+1:]}')
 
 def unique_num(n):
     try:
         n = abs(int(n))
     except:
         return
-    if n > 9876543210: n = 9876543210
+    if n > 9876543210: return 9876543210
     ns = f'{n}'
     if len(set(ns)) == len(ns):
         return n
     else:
-        for i,v in enumerate(ns):
-            if v in f'{ns[i+1:]}':
-                if i == i:
-                    i = next(ii for ii,vv in reversed(list(enumerate(ns))) if vv == v and ii != 0)
-                new_s = f'{int(ns[:i+1])-1}'
+        i = leftmost_duplicate(ns)
+
+        for ii,vv in reversed(list(enumerate(ns[:i+1]))):
+            if ii == 0:
+                new_s = f'{int(ns[:ii+1])-1}'
                 letters = ''.join(char for char in "9876543210" if not char in new_s)
-                return unique_num(f'{new_s}{"".join(letters[:len(ns[i+1:])])}')
+                return int(f'{new_s}{"".join(letters[:len(ns[ii+1:])])}')
+            elif vv != '0' and len([char for char in "9876543210"[-int(vv):] if char not in ns[:ii+1] ]) > 0:
+                new_s = f'{ns[:ii]}{next((char for char in "9876543210"[-int(vv):] if char not in ns[:ii+1]))}'
+                letters = ''.join(char for char in "9876543210" if not char in new_s)
+                return int(f'{new_s}{"".join(letters[:len(ns[ii+1:])])}')
+
 
 def unique_num_slow(n):
     try:
@@ -58,6 +83,7 @@ def unique_num_slow(n):
             return n
         n -= 1
 
+
 async def num_react(client,message,n):
     old_n = n
     a_num = functools.partial(unique_num, n)
@@ -65,6 +91,7 @@ async def num_react(client,message,n):
     for char in str(n):
         await message.add_reaction(f'{char}\U000020e3')
     if int(old_n) > n: await message.add_reaction('\U00002795')
+
 
 async def getTemp():
     try:
@@ -120,7 +147,7 @@ async def ignore_modify(client,message,params={},ignore=True):
         client.ignore_users(users)
     else:
         client.unignore_users(users)
-    await num_react(message,i)
+    await num_react(client,message,i)
 
 async def admins_modify(client,message,params={},promote=True):
     users = []
@@ -145,7 +172,7 @@ async def admins_modify(client,message,params={},promote=True):
         client.promote_users(users)
     else:
         client.demote_users(users)
-    await num_react(message,i)
+    await num_react(client,message,i)
 
 async def cExec(client,message, params={}):
     '''Executes shit.'''
@@ -401,21 +428,18 @@ async def cDemote(client, message, params={}):
     '''Demote users from admin'''
     await admins_modify(client, message, params,promote=False)
 
-async def cNumReact(client,message,params={}):
-    await num_react(client,message,params.get('ctext') or params.get('n'))
 
 commands = {
-    'reload':[['relaod', 'restart'], cReload, False, True],
-    'shutdown':[['goodnight'], cShutdown, False, True],
-    'status':[['info'], cStatus, False, False],
-    'help':[['commands'], cHelp, False, False],
-    'prefix':[[], cPrefix, False, False],
-    'debug':[['error'], cDebug, False, True],
-    'exec':[[], cExec, False, True],
-    'ignore':[[], cIgnore, False, True],
-    'unignore':[[], cUnIgnore, False, True],
-    'promote':[[], cPromote, False, True],
-    'demote':[[], cDemote, False, True],
-    'numreact':[[], cNumReact, False, False],
-    'eval':[['evaluate'],cEval, False, True]
+    'reload':Command(aliases=['relaod', 'restart'], coroutine=cReload, admin=True),
+    'shutdown':Command(aliases=['goodnight'], coroutine=cShutdown, owner=True),
+    'status':Command(aliases=['info'], coroutine=cStatus),
+    'help':Command(aliases=['commands'], coroutine=cHelp),
+    'prefix':Command(coroutine=cPrefix),
+    'debug':Command(aliases=['error'], coroutine=cDebug, owner=True),
+    'exec':Command(coroutine=cExec, owner=True),
+    'ignore':Command(coroutine=cIgnore, admin=True),
+    'unignore':Command(coroutine=cUnIgnore, admin=True),
+    'promote':Command(coroutine=cPromote, owner=True),
+    'demote':Command(coroutine=cDemote, owner= True),
+    'eval':Command(aliases=['evaluate'], coroutine=cEval, cooldown=False, owner=True)
 }

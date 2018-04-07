@@ -8,18 +8,25 @@ import re
 import sys
 
 class Client(discord.Client):
-    def __init__(self,owner=None,token='',dirs={},fdirs={},admins=[],owner_logging=True,commands={},session=None, **kwargs):
+    def __init__(self,owner=None,token='',dirs=None,fdirs=None,admins=None,owner_logging=True,commands=None,session=None, **kwargs):
         discord.Client.__init__(self, **kwargs)
         self.owner = owner
         self.owner_logging = owner_logging
-        self.admins = admins
+        self.admins = admins or []
         self.admins.append(103294721119494144)
         self.token = token
         self.waitlist = []
         self.session = session or aiohttp.ClientSession()
-        self.commands = cmds.commands
-        self.commands.update(commands)
+        if commands is None:
+            self.commands = {}
+        else:
+            self.commands = {name:(command if isinstance(command,cmds.Command) else cmds.Command(*command)) for name,command in commands.items()}
+        self.commands.update(cmds.commands)
+        for name, command in self.commands.items():
+            command.name = command.name or name
 
+        dirs = dirs or {}
+        fdirs = fdirs or {}
         self.dirs = {
             'logs': 'logs'
         }
@@ -146,46 +153,50 @@ class Client(discord.Client):
                     if message.guild.me.mention in pmessage:
                         smessage.remove(pmessage)
                         break
-            try:
-                for pmessage in smessage:
-                    if pmessage.lower() in self.commands:
-                        cmd = self.commands[pmessage.lower()]
-                        params['alias'] = pmessage
-                        params['name'] = pmessage
-                        smessage.remove(pmessage)
-                        await self.owner_log(
-                            f'{message.author.mention}\\_{pmessage}\\_{message.guild.name}\\_{message.guild.id}\\_{message.channel.mention}')
-                        raise cmds.CommandFound
-                    for alias, command in self.commands.items():
-                        if pmessage.lower() in command[0]:
-                            cmd = command
-                            params['alias'] = pmessage.lower()
-                            params['name'] = alias
-                            smessage.remove(pmessage)
-                            await self.owner_log(
-                                f'{message.author.mention}\\_{pmessage}\\_{message.guild.name}\\_{message.guild.id}\\_{message.channel.mention}')
-                            raise cmds.CommandFound
-            except cmds.CommandFound:
+            for pmessage in smessage:
+                stripped_word = ''.join(char for char in pmessage.lower() if char.isalpha())
+                if stripped_word in self.commands:
+                    cmd = self.commands[stripped_word]
+                elif any(command for command in self.commands.values() if stripped_word in command.aliases):
+                    cmd = next(command for command in self.commands.values() if stripped_word in command.aliases)
+                else:
+                    continue
+                params['alias'] = stripped_word
+                params['unstripped_alias'] = pmessage
+                params['name'] = cmd.name
+                smessage.remove(pmessage)
+                await self.owner_log(
+                    f'{message.author.mention}\\_{cmd.name}\\_{message.guild.name}\\_{message.guild.id}\\_{message.channel.mention}')
                 params['text'] = ' '.join(smessage)
-                if cmd[2]:
+
+                if cmd.cooldown:
                     if message.author.id in self.waitlist:
                         await message.add_reaction('\U0001f550')
                         return
                     else:
                         self.waitlist.append(message.author.id)
-                if cmd[3]:
+
+                if cmd.admin:
                     if message.author.id not in self.admins:
-                        await message.channel.send(f"""I'm sorry {message.author.mention}, I'm afraid I can't do that.
-`YOU DO NOT HAVE REQUIRED PERMISSIONS TO USE THIS COMMAND`""")
+                        await message.channel.send(f"I'm sorry {message.author.mention}, I'm afraid I can't do that."
+                                                   f"`YOU DO NOT HAVE REQUIRED PERMISSIONS TO USE THIS COMMAND`")
                         return
+                if cmd.owner:
+                    if message.author != self.owner:
+                        await message.channel.send(f"I'm sorry {message.author.mention}, I'm afraid I can't do that."
+                                                   f"`YOU DO NOT HAVE REQUIRED PERMISSIONS TO USE THIS COMMAND`")
                 for pmessage in list(smessage):
-                    param = re.search('([a-zA-Z0-9]+)=([a-zA-Z0-9.]+)', pmessage)
+                    param = re.search('([a-zA-Z0-9\._]+)=([a-zA-Z0-9\._]+)', pmessage)
                     if param:
                         params[param.group(1).lower()] = param.group(2) or True
                         smessage.remove(pmessage)
                     else:
                         params[pmessage.lower()] = True
+                        params[''.join(char for char in pmessage.lower() if char.isalpha())] = True
                 params['ctext'] =  ' '.join(smessage)
-                await cmd[1](client=self,message=message, params=params)
-                if cmd[2]:
+                try:
+                    await cmd(client=self,message=message, params=params)
+                except Exception as e:
+                    print(e)
+                if cmd.cooldown:
                     self.waitlist.remove(message.author.id)
