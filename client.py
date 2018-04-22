@@ -201,3 +201,4 @@ class Client(discord.Client):
                     print(e)
                 if cmd.cooldown:
                     self.waitlist.remove(message.author.id)
+                return
