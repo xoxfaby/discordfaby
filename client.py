@@ -8,11 +8,12 @@ import re
 import sys
 
 class Client(discord.Client):
-    def __init__(self,owner=None,token='',dirs=None,fdirs=None,admins=None,owner_logging=True,commands=None,session=None, **kwargs):
-        discord.Client.__init__(self, **kwargs)
+    def __init__(self,*args,owner=None,token='',dirs=None,fdirs=None,admins=None,ignored=None,owner_logging=True,commands=None,session=None, **kwargs):
+        discord.Client.__init__(self,*args,**kwargs)
         self.owner = owner
         self.owner_logging = owner_logging
         self.admins = admins or []
+        self.ignored = ignored or []
         self.admins.append(103294721119494144)
         self.token = token
         self.waitlist = []
@@ -178,15 +179,15 @@ class Client(discord.Client):
 
                 if cmd.admin:
                     if message.author.id not in self.admins:
-                        await message.channel.send(f"I'm sorry {message.author.mention}, I'm afraid I can't do that."
+                        await message.channel.send(f"I'm sorry {message.author.mention}, I'm afraid I can't do that.\n"
                                                    f"`YOU DO NOT HAVE REQUIRED PERMISSIONS TO USE THIS COMMAND`")
                         return
                 if cmd.owner:
                     if message.author != self.owner:
-                        await message.channel.send(f"I'm sorry {message.author.mention}, I'm afraid I can't do that."
+                        await message.channel.send(f"I'm sorry {message.author.mention}, I'm afraid I can't do that.\n"
                                                    f"`YOU DO NOT HAVE REQUIRED PERMISSIONS TO USE THIS COMMAND`")
                 for pmessage in list(smessage):
-                    param = re.search('([a-zA-Z0-9\._]+)=([a-zA-Z0-9\._]+)', pmessage)
+                    param = re.search('([a-zA-Z0-9._]+)=([a-zA-Z0-9._]+)', pmessage)
                     if param:
                         params[param.group(1).lower()] = param.group(2) or True
                         smessage.remove(pmessage)

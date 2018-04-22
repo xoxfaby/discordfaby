@@ -31,8 +31,8 @@ class Command():
     def __bool__(self):
         return True
 
-    def __call__(self,**kwargs):
-        return self.coroutine(**kwargs)
+    def __call__(self,*args,**kwargs):
+        return self.coroutine(*args,**kwargs)
 
     def __getitem__(self,key):
         if key == 0: return self.aliases
